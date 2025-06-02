@@ -5,9 +5,10 @@ A robust, extensible plugin for managing user, environment-specific, and automat
 
 ## 🚀 Core Features
 
-*   **Type-Safe Settings:** Stored in a custom `SettingsResource`.
-*   **User Persistence:** User settings are saved to and loaded from `user://settings.tres`.
-*   **Environment Defaults:** Load default values from environment-specific `.tres` files (e.g., `default_dev.tres`, `default_prod.tres`).
+*   **Type-Safe Settings:** Stored in a custom `SettingsResource` (for TRES) or managed by `ConfigFile` (for INI).
+*   **Flexible User Persistence:** User settings are loaded from `user://settings.ini` (preferred) or `user://settings.tres` (fallback for existing users). New settings are saved to `user://settings.ini`.
+*   **Environment Defaults:** Load default values from environment-specific `.tres` files (e.g., `default_dev.tres`, `default_prod.tres`). These always use the TRES format.
+*   **Extensible Storage:** Includes a storage adapter system, initially supporting INI and TRES file formats, allowing for future expansion (e.g., JSON, SQLite).
 *   **Automatic Property Binding:** Nodes can easily bind their properties to the SettingsManager for automatic loading, saving, and synchronization.
 *   **Persistent & Runtime-Only Bindings:** Supports properties that should be saved and those that are only for the current session.
 *   **Metadata Support:** Store rich metadata (labels, tooltips, ranges) alongside settings to drive UIs or for i18n.
@@ -16,8 +17,8 @@ A robust, extensible plugin for managing user, environment-specific, and automat
 
 ## 🧠 Behavior & Load Order
 
-1.  **User Settings (`user://settings.tres`):** Loaded first. These are the user's specific preferences.
-2.  **Environment Defaults (`res://addons/settings_manager/defaults/default_<env>.tres`):** Loaded next. These provide baseline values for the current environment. They only apply if a setting isn't already present from user settings.
+1.  **User Settings (INI or TRES):** Loaded first. The system checks for `user://settings.ini`. If found, it's used. Otherwise, it checks for `user://settings.tres` for backward compatibility. If neither is found, settings start fresh. New settings are saved to `user://settings.ini` unless loaded from an existing `.tres` file (in which case changes are saved back to `.tres`).
+2.  **Environment Defaults (`res://addons/settings_manager/defaults/default_<env>.tres`):** Loaded next. These provide baseline values for the current environment (always in TRES format). They only apply if a setting isn't already present from user settings.
 3.  **Programmatic Defaults (`SettingsManager.register_setting()`):** Can be used to define fallback defaults if a setting is not found in user settings or environment defaults.
 4.  **Node Property Binding (`SettingsManager.register_node_properties(node)`):**
 	*   When a node registers its properties, the manager checks for existing saved or default values for those settings.
@@ -29,7 +30,7 @@ This order ensures user preferences are always prioritized.
 ## ⚙️ Setting Resolution Order (When calling `get_setting(key, fallback_value)`)
 
 1.  ✅ **Runtime-Only Bound Value:** If the key is for a `runtime_only` bound property, its current live (cached) value is returned.
-2.  ✅ **User-Set Value:** If a user has a saved value for a persistent setting (from `user://settings.tres`), that is returned.
+2.  ✅ **User-Set Value:** If a user has a saved value for a persistent setting (from the active `user://settings.ini` or `user://settings.tres` file), that is returned.
 3.  ✅ **Environment Default / Registered Default:** If no user value, the value from `_defaults` (populated by environment files or `register_setting()`) is returned.
 4.  ✅ **Fallback Value:** If none of the above, the `fallback_value` passed to `get_setting()` is returned.
 
@@ -74,7 +75,7 @@ Nodes can have their properties automatically managed by the SettingsManager.
 
 Use the `@export_custom` annotation with a special hint string:
 
-*   `[settings_bind:persistent]`: The property's value will be loaded from and saved to `user://settings.tres`. It will also respect environment defaults.
+*   `[settings_bind:persistent]`: The property's value will be loaded from and saved to the user's chosen settings file (`user://settings.ini` by default for new configurations, or `user://settings.tres` if that's what was loaded). It will also respect environment defaults.
 *   `[settings_bind:runtime_only]`: The property's value is managed for the current session only. It's initialized from the script's value (or a registered default for its key) and synchronized if changed via the manager, but not saved.
 
 ```gdscript
@@ -119,6 +120,54 @@ func _ready():
 *   **Unregistration:**
 	*   `SettingsManager.unregister_node_properties(node)`: Removes all bindings for a specific node.
 	*   `SettingsManager.unregister_property(setting_key)`: Removes a specific property binding.
+
+## 💾 Storage Formats & Behavior
+
+The SettingsManager aims for flexibility in how user settings are stored.
+
+### Supported Formats
+
+*   **INI Files (`.ini`):** The preferred format for new user configurations. Uses Godot's `ConfigFile` system. Offers human-readable text-based storage.
+*   **Resource Files (`.tres`):** Used for backward compatibility if an existing `user://settings.tres` is found and no `user://settings.ini` exists. Also used for environment default files.
+
+### Loading Logic
+
+When the SettingsManager initializes or `load_settings()` is called:
+1.  It checks for `user://settings.ini`. If found, it's loaded using the INI adapter.
+2.  If `user://settings.ini` is not found, it then checks for `user://settings.tres`. If found, it's loaded using the TRES adapter. This ensures backward compatibility for users who previously had settings saved in the `.tres` format.
+3.  If neither file is found, the system starts with no user-saved settings, and any new settings will be saved to `user://settings.ini`.
+
+### Saving Logic
+
+When `save_settings()` is called:
+*   If settings were initially loaded from `user://settings.ini`, or if no settings file existed at startup (causing it to default to INI), then all current settings are saved to `user://settings.ini`.
+*   If settings were loaded from `user://settings.tres` (because no `.ini` file was present at startup), any changes will be saved back to the original `user://settings.tres` file. This maintains consistency for existing users.
+
+### INI File Structure
+
+Settings are mapped to INI sections and keys. A setting key in the format `section_name/key_name` is stored as:
+
+```ini
+[section_name]
+key_name = value
+```
+
+Metadata associated with a setting is stored in a separate section named `section_name.key_name.meta`.
+
+**Example:**
+
+A setting registered with key `audio/master_volume`, value `0.5`, and metadata `{"label_key": "ui.volume", "max": 1.0}` would be stored in `user://settings.ini` as:
+
+```ini
+[audio]
+master_volume = 0.5
+
+[audio.master_volume.meta]
+label_key = "ui.volume"
+max = 1.0
+```
+
+Arrays and complex dictionary values stored in INI files might be stringified or handled according to `ConfigFile`'s capabilities. For complex data structures, TRES files (used for defaults) handle them more natively.
 
 ## 🌍 Environment Support
 
@@ -200,4 +249,16 @@ For **bound properties**, metadata like `bound_to_node`, `bound_property`, and `
 *   **Clear Naming:** Use clear and consistent keys for your settings (e.g., `category/setting_name`).
 *   **Default Values:** Provide sensible default values via `register_setting()` or environment default files.
 *   **Save Appropriately:** Call `SettingsManager.save_settings()` at appropriate times (e.g., when exiting a settings menu, on game quit).
-*   **Backup `user://settings.tres`:** During development, it can be useful to know this file exists; for users, it's their persistent data.
+*   **Backup User Files:** During development or for users, be aware of `user://settings.ini` (the new default) and potentially `user://settings.tres` (for older setups).
+
+## 🔌 Extending Storage (For Developers)
+
+The SettingsManager now uses a storage adapter pattern to handle persistence. The base class is `StorageAdapter.gd` (`res://addons/settings_manager/core/storage_adapter.gd`).
+
+To add support for a new storage format (e.g., JSON, XML, SQLite), you would create a new script that extends `StorageAdapter` and implements the following core methods:
+
+*   `get_adapter_name() -> String`: Return a unique name for your adapter.
+*   `load_all_settings() -> Dictionary`: Load all settings from your custom source and return them as a Dictionary in the standard format: `{ "setting_key": {"value": ..., "meta": {...}}, ... }`.
+*   `save_all_settings(settings_data: Dictionary) -> bool`: Take a Dictionary in the standard format and save it to your custom source. Return `true` on success, `false` on failure.
+
+Once your adapter is created, you would modify `SettingsManagerInternal.gd` to instantiate and use your adapter, potentially adding logic to select it based on file extensions or project settings.

@@ -1,0 +1,3 @@
+[gd_resource type="Script" load_steps=1 format=3 uid="uid://5b7ab9d0dec948d8b2e5f7ce5aa8b1e3"]
+
+[ext_resource type="Script" path="res://addons/settings_manager/core/ini_storage_adapter.gd" id="1_xyz12"]

@@ -1,0 +1,3 @@
+[gd_resource type="Script" load_steps=1 format=3 uid="uid://bc5e849d5ac841f886cc8953d3fe615b"]
+
+[ext_resource type="Script" path="res://addons/settings_manager/core/tres_storage_adapter.gd" id="1_tres1"]

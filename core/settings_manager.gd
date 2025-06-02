@@ -13,7 +13,13 @@ signal node_property_updated(node: Node, property_name: StringName, new_value: V
 
 #region Public Enum / Constants
 const SettingsResource = preload("res://addons/settings_manager/core/settings_resource.gd")
-const SETTINGS_PATH: StringName = "user://settings.tres"
+const StorageAdapter = preload("res://addons/settings_manager/core/storage_adapter.gd")
+const TresStorageAdapter = preload("res://addons/settings_manager/core/tres_storage_adapter.gd")
+const IniStorageAdapter = preload("res://addons/settings_manager/core/ini_storage_adapter.gd")
+
+# const SETTINGS_PATH: StringName = "user://settings.tres" # Replaced by adapter-specific paths
+const INI_USER_PATH: StringName = "user://settings.ini"
+const TRES_USER_PATH: StringName = "user://settings.tres"
 const DEFAULTS_PATH: StringName = "res://addons/settings_manager/defaults/"
 const DEFAULTS_PATH_SETTING: StringName = "settings_manager/defaults_path"
 const BIND_PREFIX = "[settings_bind"
@@ -27,6 +33,11 @@ var _env: StringName = ProjectSettings.get_setting("application/config/environme
 var _defaults_base_path = ProjectSettings.get_setting(DEFAULTS_PATH_SETTING, DEFAULTS_PATH)
 var _resource: SettingsResource
 var _defaults := {}  # Stores default values and their meta. Structure: {key: {"value": Variant, "meta": Dictionary}}
+
+var _user_settings_adapter: StorageAdapter
+var _tres_adapter: StorageAdapter # For environment defaults and fallback
+var _ini_adapter: StorageAdapter  # For primary user settings
+var _active_user_settings_format: String = "ini" # "ini" or "tres", determined on load
 
 var _property_bindings: Dictionary = {}
 # Key: setting_key (String, e.g., "/root/Player/speed")
@@ -46,22 +57,24 @@ var _runtime_bound_values: Dictionary = {}  # Key: setting_key -> Value: Variant
 ## Loads default settings for the specified environment from a .tres file.
 func load_defaults_for_environment(env: StringName) -> void:
 	var path := "%sdefault_%s.tres" % [_defaults_base_path, env]
-	if ResourceLoader.exists(path, "SettingsResource"):
-		var defaults_res: SettingsResource = ResourceLoader.load(path, "SettingsResource")
-		if defaults_res:
-			for key in defaults_res.settings:
-				var setting_entry: Dictionary = defaults_res.settings[key]
+	
+	if ResourceLoader.exists(path): # Check if file physically exists
+		var temp_tres_adapter_for_defaults = TresStorageAdapter.new(path) 
+		var defaults_data: Dictionary = temp_tres_adapter_for_defaults.load_all_settings()
+
+		if not defaults_data.is_empty():
+			for key in defaults_data:
+				var setting_entry: Dictionary = defaults_data[key]
 				var value = setting_entry.get("value")
 				var meta = setting_entry.get("meta", {})
-				register_setting(key, value, meta.duplicate(true))  # Meta is duplicated for safety
+				register_setting(key, value, meta.duplicate(true)) 
 		else:
-			push_warning(
-				(
-					"SettingsManager: Failed to load defaults resource at '%s', though file exists."
-					% path
-				)
-			)
+			# File exists but was empty or unparsable by the adapter
+			push_warning("SettingsManager: Failed to load or parse defaults resource at '%s', though file exists. Adapter '%s' reported issues or file is empty." % [path, temp_tres_adapter_for_defaults.get_adapter_name()])
 	else:
+		# File does not exist, this might be normal if no defaults are provided for this specific environment
+		# Consider if this warning is too noisy or if it should be a debug message instead.
+		# For now, retaining a warning as it was the previous behavior.
 		push_warning(
 			(
 				"SettingsManager: Default settings file not found for environment '%s' at '%s'"
@@ -70,20 +83,39 @@ func load_defaults_for_environment(env: StringName) -> void:
 		)
 
 
-## Loads settings from the user-specific settings file (SETTINGS_PATH).
+## Loads settings from the user-specific settings file.
+## Tries INI first, then TRES. Populates _resource.settings.
 func load_settings() -> void:
-	if ResourceLoader.exists(SETTINGS_PATH):
-		_resource = ResourceLoader.load(SETTINGS_PATH, "SettingsResource")
-		if not _resource:
-			push_error(
-				(
-					"SettingsManager: Failed to load settings resource from %s. Creating new."
-					% SETTINGS_PATH
-				)
-			)
-			_resource = SettingsResource.new()
-	else:
+	# Ensure _resource is initialized
+	if not is_instance_valid(_resource):
 		_resource = SettingsResource.new()
+	else:
+		_resource.settings.clear() # Clear any existing data before loading
+
+	var ini_data: Dictionary = _ini_adapter.load_all_settings()
+
+	if not ini_data.is_empty():
+		_resource.settings = ini_data
+		_user_settings_adapter = _ini_adapter
+		_active_user_settings_format = "ini"
+		# print("SettingsManager: Loaded settings from INI adapter at %s." % _ini_adapter.user_settings_path)
+		return
+
+	# If INI failed or was empty, try TRES
+	# print("SettingsManager: INI settings not found or empty. Trying TRES adapter.")
+	var tres_data: Dictionary = _tres_adapter.load_all_settings()
+	if not tres_data.is_empty():
+		_resource.settings = tres_data
+		_user_settings_adapter = _tres_adapter
+		_active_user_settings_format = "tres"
+		# print("SettingsManager: Loaded settings from TRES adapter at %s." % _tres_adapter.user_settings_path)
+		return
+		
+	# If both are empty or failed, start with a new resource and default to INI for saving
+	# print("SettingsManager: No existing INI or TRES settings found. Starting fresh. Will save as INI.")
+	_resource.settings.clear() # Ensure it's empty
+	_user_settings_adapter = _ini_adapter 
+	_active_user_settings_format = "ini"
 
 
 ## Registers a setting with a default value and meta.
@@ -231,20 +263,27 @@ func reset_setting(key: StringName) -> void:
 		)
 
 
-## Saves all persistent settings to the user-specific settings file.
+## Saves all persistent settings using the active user settings adapter.
 func save_settings() -> void:
-	if not _resource:
-		_resource = SettingsResource.new()
-		push_warning(
-			"SettingsManager: Settings resource was not initialized before save. Creating new."
-		)
+	if not is_instance_valid(_resource):
+		_resource = SettingsResource.new() 
+		push_warning("SettingsManager: Settings resource was not initialized before save. Creating new.")
 
-	var result = ResourceSaver.save(_resource, SETTINGS_PATH)
-	if result != OK:
+	if not is_instance_valid(_user_settings_adapter):
+		push_error("SettingsManager: No user settings adapter selected/initialized. Cannot save settings.")
+		# Fallback strategy: try to initialize to INI adapter if it's null
+		if not is_instance_valid(_ini_adapter): # Should have been created in _init
+			_ini_adapter = IniStorageAdapter.new(INI_USER_PATH)
+		_user_settings_adapter = _ini_adapter # Default to INI
+		_active_user_settings_format = "ini" 
+		push_warning("SettingsManager: Defaulting to INI adapter for saving at %s." % _user_settings_adapter.user_settings_path)
+
+	var success = _user_settings_adapter.save_all_settings(_resource.settings)
+	if not success:
 		push_error(
 			(
-				"SettingsManager: Failed to save settings to '%s'. Error code: %s"
-				% [SETTINGS_PATH, result]
+				"SettingsManager: Failed to save settings using %s to '%s'."
+				% [_user_settings_adapter.get_adapter_name(), _user_settings_adapter.user_settings_path]
 			)
 		)
 
@@ -810,6 +849,11 @@ func _reset_persistent_setting(key: StringName) -> void:
 func _init():
 	if not _resource:
 		_resource = SettingsResource.new()
+	
+	_tres_adapter = TresStorageAdapter.new(TRES_USER_PATH)
+	_ini_adapter = IniStorageAdapter.new(INI_USER_PATH)
+	# _user_settings_adapter will be set during load_settings
+	
 	if not ProjectSettings.has_setting(DEFAULTS_PATH_SETTING):
 		ProjectSettings.set_setting(DEFAULTS_PATH_SETTING, DEFAULTS_PATH)
 		ProjectSettings.set_initial_value(DEFAULTS_PATH_SETTING, DEFAULTS_PATH)
