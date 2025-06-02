@@ -1,0 +1,39 @@
+[gd_resource type="Resource" script_class="SettingsResource" load_steps=2 format=3 uid="uid://bevb53o2oaddr"]
+
+[ext_resource type="Script" uid="uid://kgbyphkqd6i1" path="res://addons/settings_manager/core/settings_resource.gd" id="1_vibou"]
+
+[resource]
+script = ExtResource("1_vibou")
+settings = {
+"audio/music-volume": {
+"meta": {
+"label": "settings.audio.music",
+"max": 1,
+"min": 0,
+"tooltip": "settings.audio.music.tooltip"
+},
+"value": 0.3
+},
+"audio/sound-volume": {
+"meta": {
+"label": "settings.audio.volume",
+"max": 1,
+"min": 0,
+"tooltip": "settings.audio.volume.tooltip"
+},
+"value": 0.3
+},
+"controls/sensitivity": {
+"meta": {},
+"value": 1.2
+},
+"env/name": {
+"meta": {},
+"value": "test"
+},
+"video/fullscreen": {
+"meta": {},
+"value": true
+}
+}
+metadata/_custom_type_script = "uid://kgbyphkqd6i1"
