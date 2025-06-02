@@ -242,6 +242,42 @@ if jump_meta.has("label_key"):
 
 For **bound properties**, metadata like `bound_to_node`, `bound_property`, and `persistence` is automatically added by the manager. You can add your custom metadata on top of this.
 
+## ⚙️ Manual Setup (If Not Using The Plugin)
+
+If you are not using the full `SettingsManager` EditorPlugin (e.g., you've only copied the `core` scripts into your project) and are setting up `SettingsManagerInternal.gd` as an Autoload singleton named `SettingsManager` yourself, there's a crucial initialization step:
+
+The `SettingsManager` now requires its storage adapters (for INI and TRES files) to be injected. You must do this early in your game's lifecycle, for example, in the `_ready()` function of your main scene or another Autoload script that executes first:
+
+```gdscript
+# Example in your main scene's _ready() or an early Autoload script:
+
+# Preload the necessary scripts
+const SettingsManagerInternal = preload("res://path_to_your_scripts/core/settings_manager.gd")
+const IniStorageAdapter = preload("res://path_to_your_scripts/core/ini_storage_adapter.gd")
+const TresStorageAdapter = preload("res://path_to_your_scripts/core/tres_storage_adapter.gd")
+
+func _ready():
+    # Get the SettingsManager autoload instance
+    var settings_manager_node = get_node("/root/SettingsManager") # Or your Autoload name
+    
+    if settings_manager_node is SettingsManagerInternal:
+        var settings_manager = settings_manager_node as SettingsManagerInternal
+        # Instantiate the default adapters
+        var ini_adapter = IniStorageAdapter.new()   # Uses "user://settings.ini" by default
+        var tres_adapter = TresStorageAdapter.new() # Uses "user://settings.tres" by default
+        
+        # Inject the adapters
+        settings_manager.set_adapters(ini_adapter, tres_adapter)
+        
+        # Now the SettingsManager is ready to load settings and function correctly.
+        # SettingsManager.load_settings() will be called by its own _ready() method,
+        # or you can call it explicitly if needed after this setup.
+        print("SettingsManager adapters configured manually.")
+    else:
+        push_error("Failed to find or correctly type SettingsManager autoload for manual setup.")
+```
+Replace `"res://path_to_your_scripts/"` with the actual path to the addon's `core` directory in your project (e.g., `"res://addons/settings_manager/"`). If the `SettingsManager` plugin is enabled in Project Settings, this manual setup is handled by the plugin itself.
+
 ## ✅ Best Practices
 
 *   **Autoload:** Set up `SettingsManager` (or your wrapper around `SettingsManagerInternal`) as an Autoload singleton for easy global access.
@@ -261,4 +297,4 @@ To add support for a new storage format (e.g., JSON, XML, SQLite), you would cre
 *   `load_all_settings() -> Dictionary`: Load all settings from your custom source and return them as a Dictionary in the standard format: `{ "setting_key": {"value": ..., "meta": {...}}, ... }`.
 *   `save_all_settings(settings_data: Dictionary) -> bool`: Take a Dictionary in the standard format and save it to your custom source. Return `true` on success, `false` on failure.
 
-Once your adapter is created, you would modify `SettingsManagerInternal.gd` to instantiate and use your adapter, potentially adding logic to select it based on file extensions or project settings.
+Once your adapter class is created, you would instantiate it (e.g., `var my_adapter = MyCustomAdapter.new()`). Then, you would provide this instance to the `SettingsManager`. If using the default `SettingsManagerInternal.gd`, you could modify the script that initializes it (like `SettingsManagerPlugin.gd` or your manual setup script) to pass your custom adapter to the `set_adapters()` method, possibly alongside or in place of one of the default adapters. You might need to adjust the `set_adapters` method or add a dedicated one if you're introducing more than the standard INI/TRES pair.

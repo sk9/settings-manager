@@ -86,6 +86,14 @@ func load_defaults_for_environment(env: StringName) -> void:
 ## Loads settings from the user-specific settings file.
 ## Tries INI first, then TRES. Populates _resource.settings.
 func load_settings() -> void:
+	if not is_instance_valid(_ini_adapter) or not is_instance_valid(_tres_adapter):
+		push_error("SettingsManager: Adapters not set. Cannot load settings.")
+		if is_instance_valid(_resource): # Ensure _resource exists before clearing
+			_resource.settings.clear() # Ensure no partial/stale data
+		else: # If _resource itself is not valid (e.g. very early call)
+			_resource = SettingsResource.new() # Initialize it to be safe
+		return
+
 	# Ensure _resource is initialized
 	if not is_instance_valid(_resource):
 		_resource = SettingsResource.new()
@@ -269,21 +277,17 @@ func save_settings() -> void:
 		_resource = SettingsResource.new() 
 		push_warning("SettingsManager: Settings resource was not initialized before save. Creating new.")
 
-	if not is_instance_valid(_user_settings_adapter):
-		push_error("SettingsManager: No user settings adapter selected/initialized. Cannot save settings.")
-		# Fallback strategy: try to initialize to INI adapter if it's null
-		if not is_instance_valid(_ini_adapter): # Should have been created in _init
-			_ini_adapter = IniStorageAdapter.new(INI_USER_PATH)
-		_user_settings_adapter = _ini_adapter # Default to INI
-		_active_user_settings_format = "ini" 
-		push_warning("SettingsManager: Defaulting to INI adapter for saving at %s." % _user_settings_adapter.user_settings_path)
+	var current_active_adapter = get_active_user_adapter()
+	if not is_instance_valid(current_active_adapter):
+		push_error("SettingsManager: No active user settings adapter available. Cannot save settings.")
+		return
 
-	var success = _user_settings_adapter.save_all_settings(_resource.settings)
+	var success = current_active_adapter.save_all_settings(_resource.settings)
 	if not success:
 		push_error(
 			(
-				"SettingsManager: Failed to save settings using %s to '%s'."
-				% [_user_settings_adapter.get_adapter_name(), _user_settings_adapter.user_settings_path]
+				"SettingsManager: Failed to save settings using adapter: %s. Check adapter's internal logs/path."
+				% [current_active_adapter.get_adapter_name()] 
 			)
 		)
 
@@ -509,6 +513,42 @@ func validate_configuration() -> void:
 			)
 		)
 
+func set_adapters(p_ini_adapter: StorageAdapter, p_tres_adapter: StorageAdapter) -> void:
+	if not is_instance_valid(p_ini_adapter):
+		push_error("SettingsManager: Provided INI adapter is not valid.")
+		return
+	if not is_instance_valid(p_tres_adapter):
+		push_error("SettingsManager: Provided TRES adapter is not valid.")
+		return
+
+	_ini_adapter = p_ini_adapter
+	_tres_adapter = p_tres_adapter
+	# print("SettingsManager: Adapters set. INI: %s, TRES: %s" % [_ini_adapter.get_adapter_name(), _tres_adapter.get_adapter_name()])
+	
+	# Attempt to determine user_settings_adapter immediately if possible,
+	# or defer to load_settings. For now, load_settings will handle it.
+	# If load_settings hasn't run yet, _user_settings_adapter might be null.
+	# Consider if _user_settings_adapter needs to be set here based on some default.
+	# For now, let load_settings() manage _user_settings_adapter based on file existence.
+
+func get_ini_adapter() -> StorageAdapter:
+	return _ini_adapter
+
+func get_tres_adapter() -> StorageAdapter:
+	return _tres_adapter
+	
+func get_active_user_adapter() -> StorageAdapter:
+	if not is_instance_valid(_user_settings_adapter):
+		# This case implies load_settings() hasn't successfully run or determined an adapter.
+		# Fallback strategy: default to INI if available and no other adapter is active.
+		if is_instance_valid(_ini_adapter):
+			# push_warning("SettingsManager: _user_settings_adapter was not set, defaulting to INI adapter for get_active_user_adapter().")
+			_user_settings_adapter = _ini_adapter 
+			_active_user_settings_format = "ini" # Assume INI if we have to pick one here
+		else:
+			push_error("SettingsManager: No INI adapter available to default _user_settings_adapter.")
+			return null # No valid adapter to return
+	return _user_settings_adapter
 
 #endregion
 
@@ -850,8 +890,9 @@ func _init():
 	if not _resource:
 		_resource = SettingsResource.new()
 	
-	_tres_adapter = TresStorageAdapter.new(TRES_USER_PATH)
-	_ini_adapter = IniStorageAdapter.new(INI_USER_PATH)
+	# Adapters are now injected via set_adapters()
+	# _tres_adapter = TresStorageAdapter.new(TRES_USER_PATH) # REMOVED
+	# _ini_adapter = IniStorageAdapter.new(INI_USER_PATH)   # REMOVED
 	# _user_settings_adapter will be set during load_settings
 	
 	if not ProjectSettings.has_setting(DEFAULTS_PATH_SETTING):

@@ -6,6 +6,8 @@ const USER_TEST_SETTING_INI = "user://test_settings_save.ini"
 
 const SettingsManagerInternal = preload("res://addons/settings_manager/core/settings_manager.gd")
 const SettingsResource = preload("res://addons/settings_manager/core/settings_resource.gd")
+const IniStorageAdapter = preload("res://addons/settings_manager/core/ini_storage_adapter.gd")
+const TresStorageAdapter = preload("res://addons/settings_manager/core/tres_storage_adapter.gd")
 
 var settings: SettingsManagerInternal
 var changed = false
@@ -13,7 +15,19 @@ var changed = false
 
 func before_each():
 	settings = SettingsManagerInternal.new()
-	settings._resource = SettingsResource.new()
+	settings._resource = SettingsResource.new() # Still needed for internal structure
+
+	# Instantiate adapters with test-specific paths
+	var ini_adapter_for_test = IniStorageAdapter.new(USER_TEST_SETTING_INI)
+	var tres_adapter_for_test = TresStorageAdapter.new(USER_TEST_SETTING_RESSOURCE)
+	
+	settings.set_adapters(ini_adapter_for_test, tres_adapter_for_test)
+
+	# Ensure test files from previous runs are cleared *before* each test
+	if FileAccess.file_exists(USER_TEST_SETTING_INI):
+		DirAccess.remove_absolute(USER_TEST_SETTING_INI)
+	if FileAccess.file_exists(USER_TEST_SETTING_RESSOURCE):
+		DirAccess.remove_absolute(USER_TEST_SETTING_RESSOURCE)
 
 
 func _on_setting_changed(key, value):
@@ -163,6 +177,12 @@ func test_settings_saved_to_default_format(): # Renamed for clarity
 	# Reset/Reinitialize settings from before_each to ensure clean state for default paths
 	settings = SettingsManagerInternal.new() 
 	settings._resource = SettingsResource.new() # Critical for manager's internal state
+	
+	# Inject adapters pointing to ACTUAL default paths for this test
+	# We need to use the constants from the SettingsManagerInternal class itself for accuracy
+	var prod_ini_adapter = IniStorageAdapter.new(SettingsManagerInternal.INI_USER_PATH)
+	var prod_tres_adapter = TresStorageAdapter.new(SettingsManagerInternal.TRES_USER_PATH)
+	settings.set_adapters(prod_ini_adapter, prod_tres_adapter)
 
 	settings.register_setting("audio/music_enabled", true)
 	settings.set_setting("audio/music_enabled", false)
@@ -172,16 +192,17 @@ func test_settings_saved_to_default_format(): # Renamed for clarity
 
 	# The SettingsManager saves to its configured INI_USER_PATH by default.
 	# We should check that file, not USER_TEST_SETTING_INI unless we reconfigure the adapter.
-	var default_ini_path = settings.INI_USER_PATH # This is "user://settings.ini"
+	# Access the constant directly from the class, not the instance for safety, though instance would also work here.
+	var default_ini_path = SettingsManagerInternal.INI_USER_PATH
 	
-	assert_true(FileAccess.file_exists(default_ini_path), "INI file should be created at default path.")
+	assert_true(FileAccess.file_exists(default_ini_path), "INI file should be created at default production path.")
 	# Ensure the generic TRES path wasn't used
-	assert_false(FileAccess.file_exists(settings.TRES_USER_PATH), "TRES file should NOT be created by default at its default path.")
+	assert_false(FileAccess.file_exists(SettingsManagerInternal.TRES_USER_PATH), "TRES file should NOT be created by default at its default production path.")
 
 	# Verify INI content
 	var config_file := ConfigFile.new()
 	var err := config_file.load(default_ini_path)
-	assert_eq(err, OK, "Should be able to load the saved INI file from default path.")
+	assert_eq(err, OK, "Should be able to load the saved INI file from default production path.")
 	
 	assert_true(config_file.has_section_key("audio", "music_enabled"), "INI should have audio/music_enabled.")
 	assert_eq(config_file.get_value("audio", "music_enabled"), false, "Value in INI should be false.")
@@ -213,9 +234,11 @@ func test_settings_loads_tres_and_saves_tres_if_ini_absent():
 	assert_true(FileAccess.file_exists(USER_TEST_SETTING_RESSOURCE), "Setup: Dummy TRES file should exist at test path.")
 
 	# Initialize SettingsManagerInternal - it should load from USER_TEST_SETTING_RESSOURCE
-	# We need to configure the settings instance from before_each to use our test paths
-	settings._tres_adapter.user_settings_path = USER_TEST_SETTING_RESSOURCE
-	settings._ini_adapter.user_settings_path = USER_TEST_SETTING_INI # Ensure it looks for INI at our test path (which shouldn't exist)
+	# The `settings` instance from before_each is already configured with adapters
+	# pointing to USER_TEST_SETTING_INI and USER_TEST_SETTING_RESSOURCE.
+	# So, direct path manipulation is no longer needed here.
+	# settings._tres_adapter.user_settings_path = USER_TEST_SETTING_RESSOURCE # OLD, not needed
+	# settings._ini_adapter.user_settings_path = USER_TEST_SETTING_INI # OLD, not needed
 	
 	settings.load_settings() # This should load the TRES file from USER_TEST_SETTING_RESSOURCE
 
@@ -245,15 +268,11 @@ func after_each():
 	if FileAccess.file_exists(USER_TEST_SETTING_INI):
 		DirAccess.remove_absolute(USER_TEST_SETTING_INI)
 	
-	# Cleanup default files that might have been created by tests if not handled locally by the test
-	if is_instance_valid(settings): # settings might be nullified if a test suite fails badly
-		if FileAccess.file_exists(settings.INI_USER_PATH):
-			DirAccess.remove_absolute(settings.INI_USER_PATH)
-		if FileAccess.file_exists(settings.TRES_USER_PATH):
-			DirAccess.remove_absolute(settings.TRES_USER_PATH)
-
-	# Make sure to clear any adapter path overrides if set during a test
-	if is_instance_valid(settings) and is_instance_valid(settings._ini_adapter):
-		settings._ini_adapter.user_settings_path = settings.INI_USER_PATH # Reset to default
-	if is_instance_valid(settings) and is_instance_valid(settings._tres_adapter):
-		settings._tres_adapter.user_settings_path = settings.TRES_USER_PATH # Reset to default
+	# Cleanup for the default user files that some tests might create
+	# (like test_settings_saved_to_default_format)
+	var default_ini_path = ProjectSettings.globalize_path("user://settings.ini")
+	if FileAccess.file_exists(default_ini_path):
+		DirAccess.remove_absolute(default_ini_path)
+	var default_tres_path = ProjectSettings.globalize_path("user://settings.tres")
+	if FileAccess.file_exists(default_tres_path):
+		DirAccess.remove_absolute(default_tres_path)
