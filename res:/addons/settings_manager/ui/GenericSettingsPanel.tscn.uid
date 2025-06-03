@@ -1,0 +1,3 @@
+[gd_resource type="PackedScene" load_steps=1 format=3 uid="uid://20d4d7f301004a64b762530f27d1e196"]
+
+[ext_resource type="PackedScene" path="res://addons/settings_manager/ui/GenericSettingsPanel.tscn" id="1_gspst"]

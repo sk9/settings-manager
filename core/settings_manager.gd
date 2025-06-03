@@ -531,6 +531,10 @@ func set_adapters(p_ini_adapter: StorageAdapter, p_tres_adapter: StorageAdapter)
 	# Consider if _user_settings_adapter needs to be set here based on some default.
 	# For now, let load_settings() manage _user_settings_adapter based on file existence.
 
+## Checks if the SettingsManager is configured with necessary adapters to be used.
+func can_be_used() -> bool:
+	return is_instance_valid(_ini_adapter) and is_instance_valid(_tres_adapter)
+
 func get_ini_adapter() -> StorageAdapter:
 	return _ini_adapter
 

@@ -242,6 +242,158 @@ if jump_meta.has("label_key"):
 
 For **bound properties**, metadata like `bound_to_node`, `bound_property`, and `persistence` is automatically added by the manager. You can add your custom metadata on top of this.
 
+## 🎛️ Generic UI Panel (GenericSettingsPanel)
+
+This addon includes a `GenericSettingsPanel.tscn` scene (`res://addons/settings_manager/ui/GenericSettingsPanel.tscn`) that can automatically generate a user interface for all settings within a specified namespace. This allows for quick creation of settings menus.
+
+### How It Works
+
+The panel queries the `SettingsManager` for all settings belonging to its assigned `namespace`. It then iterates through these settings and, based on the metadata provided for each setting (especially keys prefixed with `ui_`), generates appropriate UI controls (labels, checkboxes, sliders, dropdowns, etc.).
+
+### Prerequisites: UI Metadata
+
+For the `GenericSettingsPanel` to effectively generate UI elements, your settings need to be registered with specific metadata keys. These keys inform the panel about how to display and interact with each setting. Refer back to the "🧩 Metadata for Settings" section for general metadata, and see below for `ui_*` specific keys.
+
+Key `ui_*` metadata fields include:
+
+*   `ui_label`: (String) The display text for the setting's label.
+*   `ui_type`: (String, Optional) Explicitly defines the UI control type ("checkbox", "slider", "spinbox", "line_edit", "option_button", "color_picker", "text_edit"). If omitted, type is inferred from the setting's value and other metadata (e.g., a `bool` becomes a checkbox, a `float` with `ui_min` and `ui_max` becomes a slider).
+*   `ui_min`, `ui_max`, `ui_step`: For numeric types like sliders or spinboxes.
+*   `ui_options`: (Array) For `option_button`. Can be an array of strings `["Choice A", "Choice B"]` or an array of dictionaries `[{"label": "Choice A", "value": 0}, {"label": "Choice B", "value": 1}]`.
+*   `ui_tooltip`: (String) A tooltip for the setting control.
+*   `ui_group`: (String, Optional) A string to group related settings under a common header within the panel. Settings are sorted by group, then by `ui_order`.
+*   `ui_order`: (Integer, Optional) An integer to control the display order of settings within their group (or globally if no group). Lower numbers appear first.
+*   `ui_readonly`: (Boolean, Optional) If `true`, displays the setting value as text (Label) instead of an interactive control.
+
+### Example: Registering Settings for the Generic Panel
+
+Here's how you might register some settings intended for use with the `GenericSettingsPanel`:
+
+```gdscript
+# In a script where you initialize your game's settings (e.g., an Autoload)
+
+func _ready():
+    # Ensure SettingsManager is ready (adapters injected, etc.)
+    # This is especially important if using manual setup.
+    if not SettingsManager.can_be_used():
+        # It's possible SettingsManager's _ready() hasn't run yet if this script's _ready()
+        # is called earlier. A common pattern is to have a central setup script
+        # or use call_deferred if there are order-of-execution issues with Autoloads.
+        # For simplicity, we assume SettingsManager is ready or will be shortly.
+        # If issues arise, consider call_deferred for settings registration
+        # or ensuring your settings registration script runs after SettingsManager is fully set up.
+        call_deferred("_register_ui_settings") 
+    else:
+        _register_ui_settings()
+
+func _register_ui_settings():
+    # Double check readiness in case call_deferred was used
+    if not SettingsManager.can_be_used():
+         push_warning("SettingsManager still not ready for UI settings registration after deferral.")
+         return
+
+    SettingsManager.register_setting("ui_example/enable_sound_effects", true, {
+        "ui_label": "Enable Sound Effects",
+        "ui_type": "checkbox",
+        "ui_group": "Audio",
+        "ui_order": 10,
+        "ui_tooltip": "Toggles all sound effects in the game."
+    })
+
+    SettingsManager.register_setting("ui_example/music_volume", 0.75, {
+        "ui_label": "Music Volume",
+        "ui_type": "slider",
+        "ui_min": 0.0,
+        "ui_max": 1.0,
+        "ui_step": 0.01,
+        "ui_group": "Audio",
+        "ui_order": 20,
+        "ui_tooltip": "Adjust the music volume."
+    })
+    
+    SettingsManager.register_setting("ui_example/graphics_quality", "medium", {
+        "ui_label": "Graphics Quality",
+        "ui_type": "option_button",
+        "ui_options": [
+            {"label": "Low", "value": "low"},
+            {"label": "Medium", "value": "medium"},
+            {"label": "High", "value": "high"}
+        ],
+        "ui_group": "Graphics",
+        "ui_order": 10,
+        "ui_tooltip": "Select the overall graphics quality preset."
+    })
+
+    SettingsManager.register_setting("ui_example/player_name", "Hero", {
+        "ui_label": "Player Name",
+        "ui_type": "line_edit",
+        "ui_group": "Player",
+        "ui_order": 10,
+        "ui_tooltip": "Enter your character's name."
+    })
+    
+    SettingsManager.register_setting("ui_example/favorite_color", Color.BLUE, {
+        "ui_label": "Favorite Color",
+        # "ui_type": "color_picker", # Inferred if ui_type is omitted for a Color value
+        "ui_group": "Player",
+        "ui_order": 20
+    })
+
+    SettingsManager.register_setting("ui_example/game_version", "1.0.2-beta", {
+        "ui_label": "Game Version",
+        "ui_readonly": true, # This will be displayed as a non-editable Label
+        "ui_group": "About",
+        "ui_order": 10
+    })
+    # print("UI example settings registered.") # Optional: for debugging
+```
+
+### Using GenericSettingsPanel in Your Scene
+
+1.  **Instance the Scene:** Add `GenericSettingsPanel.tscn` (from `res://addons/settings_manager/ui/`) to your main settings menu scene. You might add multiple instances if you want different namespaces in different tabs or sections.
+2.  **Set the Namespace:** In the Inspector, set the `Namespace` property of your `GenericSettingsPanel` instance to the namespace you want to display (e.g., `"ui_example"` from the code above, or more common ones like `"audio"`, `"graphics"`, `"gameplay"`).
+
+```gdscript
+# Example in your main settings menu scene's script
+# (e.g., your SettingsMenu.gd)
+
+# Assuming you have a TabContainer and you've instanced GenericSettingsPanel
+# under each tab, or just one panel if it's a simple menu.
+
+# For a TabContainer setup:
+# @onready var graphics_settings_panel = $TabContainer/GraphicsTab/YourGraphicsGenericSettingsPanelInstance
+# @onready var audio_settings_panel = $TabContainer/AudioTab/YourAudioGenericSettingsPanelInstance
+# @onready var player_settings_panel = $TabContainer/PlayerTab/YourPlayerGenericSettingsPanelInstance
+# @onready var about_settings_panel = $TabContainer/AboutTab/YourAboutGenericSettingsPanelInstance
+
+# For a simpler, single panel setup:
+@onready var main_settings_panel = $Path/To/Your/GenericSettingsPanelInstance
+
+
+func _ready():
+    # Ensure your settings (with UI metadata) are registered before panels try to display them.
+    # This might be done in an Autoload script as shown in the registration example.
+
+    # For a TabContainer setup:
+    # graphics_settings_panel.namespace = "graphics" # Assuming you have settings in "graphics" namespace
+    # audio_settings_panel.namespace = "ui_example" # Using the example namespace from registration code
+    # player_settings_panel.namespace = "player" # Using the example namespace from registration code
+    # about_settings_panel.namespace = "about" # Using the example namespace from registration code
+
+    # For a single panel setup, if you used the "ui_example" namespace for all above:
+    main_settings_panel.namespace = "ui_example"
+    # Or, if you want to show ALL settings (not recommended for large numbers, and groups won't make sense):
+    # main_settings_panel.namespace = "" 
+    # (Note: empty namespace might not be fully optimized for display, better to use specific ones)
+
+
+    # The panels will automatically populate themselves if SettingsManager is ready.
+    # If you change a panel's namespace at runtime later, you can call:
+    # main_settings_panel.refresh_ui()
+```
+
+The panel will then automatically generate the UI controls. When a user interacts with a control, the corresponding setting in `SettingsManager` is updated automatically. If a setting is changed elsewhere in your code (via `SettingsManager.set_setting()`), the panel will also update to reflect this change.
+
 ## ⚙️ Manual Setup (If Not Using The Plugin)
 
 If you are not using the full `SettingsManager` EditorPlugin (e.g., you've only copied the `core` scripts into your project) and are setting up `SettingsManagerInternal.gd` as an Autoload singleton named `SettingsManager` yourself, there's a crucial initialization step:
